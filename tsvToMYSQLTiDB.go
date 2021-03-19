@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -18,7 +19,7 @@ var (
 	TABLENAME = ""
 	FILENAME = ""
 	DELIMITER = '\t'		// default delimiter for csv files
-	MAX_SQL_CONNECTIONS = 50	// default max_connections of mysql is 150
+	MAX_SQL_CONNECTIONS = 100	// default max_connections of mysql
 	CONN_STR = ""
 )
 
@@ -78,9 +79,9 @@ func main() {
 
 	query := ""											// query statement
 	callback 	:= make(chan int, 1024)						// callback channel for insert goroutines
-	connections := 0									// number of concurrent connections
-	insertions 	:= 0									// counts how many insertions have finished
-	fails := 0
+	connections := int64(0)									// number of concurrent connections
+	insertions := int64(0)									// counts how many insertions have finished
+	fails := int64(0)
 	available 	:= make(chan bool, MAX_SQL_CONNECTIONS)	// buffered channel, holds number of available connections
 	for i := 0; i < MAX_SQL_CONNECTIONS; i++ {
 		available <- true
@@ -94,7 +95,7 @@ func main() {
 	startConnectionController(&insertions, &fails, &connections, callback, available)
 
 	var wg sync.WaitGroup
-	id := 1
+	id := -1
 	isFirstRow := true
 
 	for {
@@ -110,8 +111,7 @@ func main() {
 			parseColumns(record, &query)
 			isFirstRow = false
 		} else if <-available {		// wait for available database connection
-			connections += 1
-			id += 1
+			id++
 			wg.Add(1)
 			args := repalceNULLByDEFAULT(record)
 			go insert(id, query, db, callback, &connections, &wg, args)
@@ -124,17 +124,18 @@ func main() {
 	log.Printf("Execution time: %s\n", elapsed)
 	log.Printf("Status: %d insertions, %d valid insertions\n", insertions, insertions - fails)
 	log.Printf("QPS: %d , Valid QPS: %d\n",
-			 int64(insertions) *1000000000/elapsed.Nanoseconds(), int64(insertions - fails) *1000000000/elapsed.Nanoseconds())
+			  insertions *1000000000/elapsed.Nanoseconds(), (insertions - fails) *1000000000/elapsed.Nanoseconds())
 }
 
 // inserts data into database
-func insert(id int, query string, db *sql.DB, callback chan<- int, conns *int, wg *sync.WaitGroup, args []interface{}) {
+func insert(id int, query string, db *sql.DB, callback chan<- int, connections *int64, wg *sync.WaitGroup, args []interface{}) {
 	// make a new statement for every insert,
 	// this is quite inefficient, but since all inserts are running concurrently,
 	// it's still faster than using a single prepared statement and
 	// inserting the data sequentielly.
 	// we have to close the statement after the routine terminates,
 	// so that the connection to the database is released and can be reused
+	atomic.AddInt64(connections, 1)
 	stmt, err := db.Prepare(query)
 	if err != nil {
 		log.Fatal(err.Error())
@@ -144,29 +145,28 @@ func insert(id int, query string, db *sql.DB, callback chan<- int, conns *int, w
 
 	_, err = stmt.Exec(args...)
 	if err != nil {
-		log.Printf("ID: %d (%d conns), %s\n", id, *conns, err.Error())
-		callback <- -id
-		return
+		log.Printf("Row Number: %d, %s\n", id, err.Error())
+		id = -id
 	}
+	atomic.AddInt64(connections, -1)
 	// finished inserting, send id over channel to signalize termination of routine
 	callback <- id
 }
 
 // controls termination of program and number of connections to database
-func startConnectionController(insertions, fails, connections *int, callback <-chan int, available chan<- bool) {
+func startConnectionController(insertions, fails, connections *int64, callback <-chan int, available chan<- bool) {
 	go func() { for {
-		*insertions += 1	// a routine terminated, increment counter
-		id := <-callback		// returns id of terminated routine
+		atomic.AddInt64(insertions, 1)	// a routine terminated, increment counter
+		id := <-callback	// returns id of terminated routine
 		if (id<0) {
-		  *fails += 1
+		  atomic.AddInt64(fails, 1)
 		}
-		*connections -= 1	// and unregister its connection
 		available <- true	// make new connection available
 	}}()
 }
 
 // print status update to console every second
-func startLogger(insertions, fails, connections *int) {
+func startLogger(insertions, fails, connections *int64) {
 	go func() {
 		c := time.Tick(time.Second)
 		for {
@@ -178,7 +178,6 @@ func startLogger(insertions, fails, connections *int) {
 
 // parse csv columns, create query statement
 func parseColumns(columns []string, query *string) {
-
 	*query = "INSERT INTO "+TABLENAME+" ("
 	placeholder := "VALUES ("
 	for i, c := range columns {
@@ -199,7 +198,7 @@ func repalceNULLByDEFAULT(s []string) []interface{} {
 	i := make([]interface{}, len(s))
 	for k, v := range s {
 	    if v == "NULL" {
-	        i[k] = nil  // or sql.NullString{}
+	        i[k] = nil  // sql.NullString{}
 	    } else {
 	        i[k] = v
 	    }
