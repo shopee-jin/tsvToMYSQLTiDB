@@ -48,6 +48,8 @@ func main() {
 	file := os.NewFile(uintptr(syscall.Stdin), "/dev/stdin")
 	reader := csv.NewReader(file)
 	reader.Comma = DELIMITER		// set custom comma for reader (default: ',')
+	// a,b,c"d" working as 3 cols when LazyQuotes is true
+	reader.LazyQuotes = true
 
 	// --------------------------------------------------------------------------
 	// database connection setup
