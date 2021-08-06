@@ -21,6 +21,7 @@ var (
 	DELIMITER = '\t'		// default delimiter for csv files
 	MAX_SQL_CONNECTIONS = 100	// default max_connections of mysql
 	CONN_STR = ""
+	ON_DUP_KEYS_UPDATE = false
 )
 
 // parse flags and command line arguments
@@ -29,6 +30,7 @@ func parseSysArgs() {
 	table := flag.String("table", TABLENAME, "Name of MySQL database table.")
 	delimiter := flag.String("d", string(DELIMITER), "Delimiter used in .csv file.")
 	max_conns := flag.Int("conns", MAX_SQL_CONNECTIONS, "Maximum number of concurrent connections to database. Value depends on your MySQL configuration.")
+	on_dup_keys_update := flag.Bool("enable_update", ON_DUP_KEYS_UPDATE, "enable insert on duplicate key update, BE CAREFUL, it might cause deadlock.")
 
 	flag.Parse()
 
@@ -36,6 +38,7 @@ func parseSysArgs() {
 	DELIMITER = []rune(*delimiter)[0]
 	MAX_SQL_CONNECTIONS = *max_conns
 	CONN_STR = *db
+	ON_DUP_KEYS_UPDATE = *on_dup_keys_update
 }
 
 func main() {
@@ -182,17 +185,23 @@ func startLogger(insertions, fails, connections *int64) {
 func parseColumns(columns []string, query *string) {
 	*query = "INSERT INTO "+TABLENAME+" ("
 	placeholder := "VALUES ("
+	update := "ON DUPLICATE KEY UPDATE "
 	for i, c := range columns {
 		if i == 0 {
 			*query += c
 			placeholder += "?"
+			update += (c + "=VALUES(" + c + ")")
 		} else {
 			*query += ", "+c
 			placeholder += ", ?"
+			update += (", "+ c + "=VALUES(" + c + ")")
 		}
 	}
 	placeholder += ")"
 	*query += ") " + placeholder
+	if ON_DUP_KEYS_UPDATE {
+		*query += update
+	}
 }
 
 // convert []string to []interface{}
