@@ -22,6 +22,7 @@ var (
 	MAX_SQL_CONNECTIONS = 100	// default max_connections of mysql
 	CONN_STR = ""
 	ON_DUP_KEYS_UPDATE = false
+	EXIT_ON_SQL_ERROR = false
 )
 
 // parse flags and command line arguments
@@ -31,6 +32,7 @@ func parseSysArgs() {
 	delimiter := flag.String("d", string(DELIMITER), "Delimiter used in .csv file.")
 	max_conns := flag.Int("conns", MAX_SQL_CONNECTIONS, "Maximum number of concurrent connections to database. Value depends on your MySQL configuration.")
 	on_dup_keys_update := flag.Bool("enable_update", ON_DUP_KEYS_UPDATE, "enable insert on duplicate key update, BE CAREFUL, it might cause deadlock.")
+	exit_on_sql_error := flag.Bool("exit_on_sql_error", EXIT_ON_SQL_ERROR, "in case any sql error, panic and exit")
 
 	flag.Parse()
 
@@ -39,6 +41,7 @@ func parseSysArgs() {
 	MAX_SQL_CONNECTIONS = *max_conns
 	CONN_STR = *db
 	ON_DUP_KEYS_UPDATE = *on_dup_keys_update
+	EXIT_ON_SQL_ERROR = *exit_on_sql_error
 }
 
 func main() {
@@ -150,6 +153,9 @@ func insert(id int, query string, db *sql.DB, callback chan<- int, connections *
 
 	_, err = stmt.Exec(args...)
 	if err != nil {
+		if EXIT_ON_SQL_ERROR {
+			log.Fatal(err.Error())
+		}
 		log.Printf("Row Number: %d, %s\n", id, err.Error())
 		id = -id
 	}
