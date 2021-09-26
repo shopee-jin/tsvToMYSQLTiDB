@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"encoding/csv"
 	"flag"
 	"log"
 	"io"
@@ -52,7 +51,7 @@ func main() {
 	// prepare buffered file reader
 	// --------------------------------------------------------------------------
 	file := os.NewFile(uintptr(syscall.Stdin), "/dev/stdin")
-	reader := csv.NewReader(file)
+	reader := NewReader(file)
 	reader.Comma = DELIMITER		// set custom comma for reader (default: ',')
 	// a,b,c"d" working as 3 cols when LazyQuotes is true
 	reader.LazyQuotes = true
